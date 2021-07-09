@@ -12,7 +12,6 @@ type state struct {
 }
 
 func (s *state) newGame(channelID, whiteID, blackID string) *game {
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -23,15 +22,13 @@ func (s *state) newGame(channelID, whiteID, blackID string) *game {
 }
 
 func (s *state) game(channelID string) *game {
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	return s.games[channelID]
 }
 
-func (s *state) resign(channelID string) {
-
+func (s *state) done(channelID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

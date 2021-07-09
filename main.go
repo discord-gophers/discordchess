@@ -11,7 +11,6 @@ import (
 )
 
 func main() {
-
 	dg, err := discordgo.New("Bot " + os.Getenv("DISCORD_API_KEY"))
 	if err != nil {
 		log.Fatalf("Failed to create discord session: %v", err)
@@ -20,14 +19,14 @@ func main() {
 
 	dg.AddHandler(messageCreateHandler)
 
-	dg.Identify.Intents = discordgo.IntentsGuildMessages
+	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildMessageReactions
 
 	if err := dg.Open(); err != nil {
 		log.Fatalf("Failed to open discord connection: %v", err)
 	}
 
 	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 
 	<-sc
 }
