@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"image/color"
 	"log"
 	"os"
 	"os/exec"
@@ -11,6 +13,14 @@ import (
 	"github.com/notnil/chess"
 	chessimage "github.com/notnil/chess/image"
 )
+
+var help = "" +
+	"Help:\n" +
+	"  `%[1]shelp` - show this\n" +
+	"  `%[1]splay @player1 @player2` - starts a game\n" +
+	"  `%[1]smove <move>` - do a move in algebraic notation\n" +
+	"  `%[1]sboard` - shows the board\n" +
+	"  `%[1]sresign` - resigns the game\n"
 
 func messageCreateHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 	prefix := os.Getenv("CMD_PREFIX")
@@ -29,7 +39,14 @@ func messageCreateHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
+	// TODO: {lpf} Add Draw offer command?
 	switch cmd[0] {
+	case "help":
+		s.ChannelMessageSend(
+			m.ChannelID,
+			fmt.Sprintf(help, prefix),
+		)
+		return
 	case "play":
 		if gameStates.game(m.ChannelID) != nil {
 			s.ChannelMessageSend(m.ChannelID, "Game in progress")
@@ -40,10 +57,11 @@ func messageCreateHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		if len(cmd) != 3 || len(m.Mentions) != 2 {
 			s.ChannelMessageSend(
 				m.ChannelID,
-				"Start a game with `"+prefix+"play @player1 @player2`",
+				fmt.Sprintf("Start a game with `%splay @player1 @player2`", prefix),
 			)
 			return
 		}
+		s.MessageReactionAdd(m.ChannelID, m.ID, "✅")
 
 		g := gameStates.newGame(
 			m.ChannelID,
@@ -51,13 +69,10 @@ func messageCreateHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 			m.Mentions[1].ID,
 		)
 
-		if err := sendBoard(s, m.ChannelID, g.Position().Board()); err != nil {
+		if err := sendBoard(g, s, m.ChannelID); err != nil {
 			log.Println("board fail:", err)
 		}
-		s.ChannelMessageSend(
-			m.ChannelID,
-			fmt.Sprintf("<@%s> turn!", g.curID),
-		)
+		sendOutcome(g, s, m.ChannelID)
 
 	case "move":
 		g := gameStates.game(m.ChannelID)
@@ -66,55 +81,74 @@ func messageCreateHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 			return
 		}
 
-		if m.Author.ID != g.curID {
-			s.ChannelMessageSend(m.ChannelID, "nop")
-			s.MessageReactionAdd(m.ChannelID, m.Message.ID, ":x:")
+		if m.Author.ID != g.turn() {
+			s.MessageReactionAdd(m.ChannelID, m.ID, `❌`)
 			return
 		}
-		if len(cmd) < 2 {
-			s.ChannelMessageSend(m.ChannelID, "Valid moves: "+fmt.Sprint(g.ValidMoves()))
-			return
-		}
-		if err := g.MoveStr(cmd[1]); err != nil {
-			// TODO: {lpf} proper error message
-			s.ChannelMessageSend(m.ChannelID, "Invalid move: "+fmt.Sprint(err))
-			return
-		}
-		s.MessageReactionAdd(m.ChannelID, m.Message.ID, ":white_check_mark:")
 
-		if err := sendBoard(s, m.ChannelID, g.Position().Board()); err != nil {
+		if len(cmd) < 2 {
+			buf := &bytes.Buffer{}
+			moves := g.ValidMoves()
+			fmt.Fprintf(buf, "Valid moves:\n```\n")
+			enc := chess.AlgebraicNotation{}
+			for i, m := range moves {
+				if i != 0 {
+					fmt.Fprintf(buf, ", ")
+				}
+				p := g.Position().Board().Piece(m.S1())
+				fmt.Fprintf(buf, "%s %s",
+					p.String(),
+					enc.Encode(g.Position(), m),
+				)
+			}
+			fmt.Fprintf(buf, "\n```")
+			s.ChannelMessageSend(m.ChannelID, buf.String())
+			return
+		}
+
+		if err := g.MoveStr(cmd[1]); err != nil {
+			s.MessageReactionAdd(m.ChannelID, m.ID, `❌`)
+			// TODO: {lpf} proper error message
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprint("Invalid move: ", err))
+			return
+		}
+
+		s.MessageReactionAdd(m.ChannelID, m.ID, "✅")
+
+		if err := sendBoard(g, s, m.ChannelID); err != nil {
 			log.Println("board fail:", err)
 		}
 
-		// TODO: {lpf} a method on game state might be better?
-		curID := g.whiteID
-		if g.curID == g.whiteID {
-			curID = g.blackID
-		}
-		g.curID = curID
+		sendOutcome(g, s, m.ChannelID)
 
-		switch g.Outcome() {
-		case chess.WhiteWon:
-			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("<@%s> Won !!\n%v", g.whiteID, g.Moves()))
-			gameStates.done(m.ChannelID)
-		case chess.BlackWon:
-			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("<@%s> Won !!\n%v", g.blackID, g.Moves()))
-			gameStates.done(m.ChannelID)
-		case chess.Draw:
-			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Draw !!\n%v", g.Moves()))
-			gameStates.done(m.ChannelID)
-		case chess.NoOutcome:
-			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("<@%s> turn!", g.curID))
-		}
-
-	case "resign":
-		if gameStates.game(m.ChannelID) == nil {
+	case "board":
+		g := gameStates.game(m.ChannelID)
+		if g == nil {
 			s.ChannelMessageSend(m.ChannelID, "No game in progress")
 			return
 		}
 
+		if err := sendBoard(g, s, m.ChannelID); err != nil {
+			log.Println("board fail:", err)
+		}
+		sendOutcome(g, s, m.ChannelID)
+
+	case "resign":
+		g := gameStates.game(m.ChannelID)
+		if g == nil {
+			s.ChannelMessageSend(m.ChannelID, "No game in progress")
+			return
+		}
+
+		if m.Author.ID != g.turn() {
+			s.MessageReactionAdd(m.ChannelID, m.ID, `❌`)
+			return
+		}
+
+		g.Resign(g.Position().Turn())
+		sendOutcome(g, s, m.ChannelID)
+
 		gameStates.done(m.ChannelID)
-		// TODO indicate winner
 
 	default:
 		g := gameStates.game(m.ChannelID)
@@ -125,7 +159,7 @@ func messageCreateHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 }
 
-func sendBoard(s *discordgo.Session, channelID string, board *chess.Board) error {
+func sendBoard(g *game, s *discordgo.Session, channelID string) error {
 	cmd := exec.Command("convert", "svg:-", "png:-")
 	wr, err := cmd.StdinPipe()
 	if err != nil {
@@ -137,9 +171,17 @@ func sendBoard(s *discordgo.Session, channelID string, board *chess.Board) error
 	}
 	go func() {
 		defer wr.Close()
+		moves := g.Moves()
+		if len(moves) == 0 {
+			chessimage.SVG(wr, g.Position().Board())
+			return
+		}
+		last := moves[len(moves)-1]
+		yellow := color.RGBA{255, 255, 0, 1}
 		chessimage.SVG(
 			wr,
-			board,
+			g.Position().Board(),
+			chessimage.MarkSquares(yellow, last.S1(), last.S2()),
 		)
 	}()
 
@@ -152,12 +194,35 @@ func sendBoard(s *discordgo.Session, channelID string, board *chess.Board) error
 		channelID,
 		&discordgo.MessageSend{
 			Files: []*discordgo.File{
-				{
-					Name:   "board.png",
-					Reader: rd,
-				},
+				{Name: "board.png", Reader: rd},
 			},
 		},
 	)
+	if err != nil {
+		return err
+	}
+
+	if o := book.Find(g.Moves()); o != nil {
+		_, err = s.ChannelMessageSend(channelID, o.Title())
+	}
 	return err
+}
+
+// TODO: {lpf} sendOutcome could be renamed to checkOutcome or so, since it
+// does more than just sending message, like changing gameStates to remove the game
+func sendOutcome(g *game, s *discordgo.Session, channelID string) {
+	switch g.Outcome() {
+	case chess.WhiteWon:
+		// TODO: {lpf} could be a nice message with a bigger PFP and all that
+		s.ChannelMessageSend(channelID, fmt.Sprintf(":tada: <@%s> Won %s!!\n%s", g.whiteID, g.Method(), g.String()))
+		gameStates.done(channelID)
+	case chess.BlackWon:
+		s.ChannelMessageSend(channelID, fmt.Sprintf(":tada: <@%s> Won %s!!\n%s", g.blackID, g.Method(), g.String()))
+		gameStates.done(channelID)
+	case chess.Draw:
+		s.ChannelMessageSend(channelID, fmt.Sprintf("Draw %s!!\n%v", g.Method(), g.String()))
+		gameStates.done(channelID)
+	case chess.NoOutcome:
+		s.ChannelMessageSend(channelID, fmt.Sprintf("<@%s> turn!", g.turn()))
+	}
 }

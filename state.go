@@ -1,6 +1,12 @@
 package main
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/notnil/chess/opening"
+)
+
+var book *opening.BookECO = opening.NewBookECO()
 
 var gameStates = &state{
 	games: make(map[string]*game),
