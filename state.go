@@ -1,4 +1,4 @@
-package main
+package discordchess
 
 import (
 	"sync"
@@ -8,23 +8,23 @@ import (
 
 var book *opening.BookECO = opening.NewBookECO()
 
-var gameStates = &state{
-	games: make(map[string]*game),
-}
-
+// this could be directly in the ChessHandler struct
 type state struct {
 	games map[string]*game
 	mu    sync.Mutex
 }
 
-func (s *state) newGame(channelID, whiteID, blackID string) *game {
+func (s *state) newGame(channelID, whiteID, blackID string, initUCI bool) (*game, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	g := newGame(whiteID, blackID)
+	g, err := newGame(whiteID, blackID, initUCI)
+	if err != nil {
+		return nil, err
+	}
 	s.games[channelID] = g
 
-	return g
+	return g, nil
 }
 
 func (s *state) game(channelID string) *game {
@@ -37,6 +37,10 @@ func (s *state) game(channelID string) *game {
 func (s *state) done(channelID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if g := s.games[channelID]; g != nil {
+		g.Close()
+	}
 
 	delete(s.games, channelID)
 }
