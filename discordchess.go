@@ -85,6 +85,12 @@ func (c *ChessHandler) messageCreateHandler(s *discordgo.Session, m *discordgo.M
 	}
 
 	switch cmd[0] {
+	case "say":
+		_, err := s.ChannelMessageSend(
+			m.ChannelID,
+			m.Content[len(c.prefix)+4:],
+		)
+		return err
 	case "help":
 		_, err := s.ChannelMessageSend(
 			m.ChannelID,
@@ -237,7 +243,7 @@ func (c *ChessHandler) checkOutcome(g *game, s *discordgo.Session, channelID str
 		}
 	}
 
-	if g.Outcome() != chess.NoOutcome {
+	if o := g.Outcome(); o != chess.NoOutcome {
 		return c.GameOver(g, s, channelID)
 	}
 	if _, err := s.ChannelMessageSend(channelID, fmt.Sprintf("<@%s> turn!", g.turn())); err != nil {
@@ -319,35 +325,30 @@ func sendBoard(g *game, s *discordgo.Session, channelID string) error {
 func (c *ChessHandler) GameOver(g *game, s *discordgo.Session, channelID string) error {
 	defer c.states.done(channelID)
 
-	var winner, loser string
+	var winner string
 	method := g.Method().String()
+
+	whiteStatus, whiteEmoji := "draw", ""
+	blackStatus, blackEmoji := "draw", ""
+
 	switch g.Outcome() {
 	case chess.WhiteWon:
-		winner, loser = g.player(chess.White), g.player(chess.Black)
+		winner = g.whiteID
+		whiteStatus, whiteEmoji = "Win", ":tada:"
+		blackStatus, blackEmoji = "Lose", ":thumbsdown:"
 	case chess.BlackWon:
-		winner, loser = g.player(chess.Black), g.player(chess.White)
+		winner = g.blackID
+		whiteStatus, whiteEmoji = "Lose", ":thumbsdown:"
+		blackStatus, blackEmoji = "Win", ":tada:"
 	}
 
 	var avatarurl string
-	var fields []*discordgo.MessageEmbedField
 	if winner != "" {
 		user, err := s.User(winner)
 		if err != nil {
 			return err
 		}
 		avatarurl = user.AvatarURL("128x128")
-		fields = []*discordgo.MessageEmbedField{
-			{
-				Name:   "Win",
-				Value:  fmt.Sprintf(":tada: <@%s>", winner),
-				Inline: true,
-			},
-			{
-				Name:   "Lose",
-				Value:  fmt.Sprintf(":thumbsdown: <@%s>", loser),
-				Inline: true,
-			},
-		}
 	}
 
 	_, err := s.ChannelMessageSendEmbed(
@@ -359,11 +360,23 @@ func (c *ChessHandler) GameOver(g *game, s *discordgo.Session, channelID string)
 			Thumbnail: &discordgo.MessageEmbedThumbnail{
 				URL: avatarurl,
 			},
-			Fields: append(fields, &discordgo.MessageEmbedField{
-				Name:   "Game:",
-				Value:  g.String(),
-				Inline: false,
-			}),
+			Fields: []*discordgo.MessageEmbedField{
+				{
+					Name:   whiteStatus,
+					Value:  fmt.Sprintf("%s <@%s>", whiteEmoji, g.whiteID),
+					Inline: true,
+				},
+				{
+					Name:   blackStatus,
+					Value:  fmt.Sprintf("%s <@%s>", blackEmoji, g.blackID),
+					Inline: true,
+				},
+				{
+					Name:   "Game:",
+					Value:  g.String(),
+					Inline: false,
+				},
+			},
 		},
 	)
 	return err

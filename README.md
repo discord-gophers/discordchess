@@ -10,7 +10,7 @@ https://github.com/notnil/chess.
 $ go run github.com/DiscordGophers/discordchess/cmd/discordchess
 ```
 
-## Environment variables:
+## Environment variables
 
 (automatically loads .env file)
 
