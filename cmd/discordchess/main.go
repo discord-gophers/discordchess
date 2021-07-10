@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/DiscordGophers/discordchess"
 	"github.com/bwmarrin/discordgo"
 	_ "github.com/joho/godotenv/autoload"
 )
@@ -17,7 +18,19 @@ func main() {
 	}
 	defer dg.Close()
 
-	dg.AddHandler(messageCreateHandler)
+	prefix := os.Getenv("CMD_PREFIX")
+	if prefix == "" {
+		prefix = "!"
+	}
+	roomMatch := os.Getenv("ROOM_MATCH")
+
+	log.Println("Starting:")
+	log.Printf("  prefix: %q", prefix)
+	log.Printf("  rooms: %q", roomMatch)
+
+	dc := discordchess.New(prefix, roomMatch)
+
+	dg.AddHandler(dc.MessageCreateHandler)
 
 	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildMessageReactions
 
