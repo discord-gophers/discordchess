@@ -60,7 +60,6 @@ func (c *ChessHandler) MessageCreateHandler(s *discordgo.Session, m *discordgo.M
 					ChannelID: m.ChannelID,
 					MessageID: m.ID,
 				})
-			// s.ChannelMessageSend(m.ChannelID, string(e))
 		}
 		return
 	}
@@ -74,8 +73,6 @@ func (c *ChessHandler) messageCreateHandler(s *discordgo.Session, m *discordgo.M
 		return nil
 	}
 
-	// TODO check if channel starts with chess- or something
-
 	cmd := strings.Fields(
 		strings.Replace(m.Content, c.prefix, "", 1),
 	)
@@ -86,9 +83,13 @@ func (c *ChessHandler) messageCreateHandler(s *discordgo.Session, m *discordgo.M
 
 	switch cmd[0] {
 	case "say":
+		msg := strings.Replace(m.Content, c.prefix+"say", "", 1)
+		if msg == "" {
+			return nil
+		}
 		_, err := s.ChannelMessageSend(
 			m.ChannelID,
-			m.Content[len(c.prefix)+4:],
+			msg,
 		)
 		return err
 	case "help":
