@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/DiscordGophers/discordchess"
@@ -23,12 +24,17 @@ func main() {
 		prefix = "!"
 	}
 	roomMatch := os.Getenv("ROOM_MATCH")
+	adminRoles := strings.Split(os.Getenv("ADMIN_ROLES"), ",")
 
 	log.Println("Starting:")
 	log.Printf("  prefix: %q", prefix)
 	log.Printf("  rooms: %q", roomMatch)
 
-	dc := discordchess.New(prefix, roomMatch)
+	dc := discordchess.New(
+		prefix,
+		roomMatch,
+		adminRoles,
+	)
 
 	dg.AddHandler(dc.MessageCreateHandler)
 

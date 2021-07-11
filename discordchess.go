@@ -31,17 +31,24 @@ var help = "" +
 	"  `%[1]sresign` - resigns the game\n"
 
 type ChessHandler struct {
-	prefix    string
-	channelRE *regexp.Regexp
-	states    *state
+	prefix     string
+	channelRE  *regexp.Regexp
+	adminRoles map[string]struct{}
+	states     *state
 }
 
-func New(cmdPrefix, channelRe string) *ChessHandler {
+func New(cmdPrefix, channelRe string, adminRoles []string) *ChessHandler {
 	re := regexp.MustCompile(channelRe)
 
+	roleMap := map[string]struct{}{}
+	for _, r := range adminRoles {
+		roleMap[r] = struct{}{}
+	}
+
 	return &ChessHandler{
-		prefix:    cmdPrefix,
-		channelRE: re,
+		prefix:     cmdPrefix,
+		channelRE:  re,
+		adminRoles: roleMap,
 		states: &state{
 			games: make(map[string]*game),
 		},
@@ -82,6 +89,29 @@ func (c *ChessHandler) messageCreateHandler(s *discordgo.Session, m *discordgo.M
 	}
 
 	switch cmd[0] {
+	case "cancel":
+		g := c.states.game(m.ChannelID)
+		if g == nil {
+			return ErrNoGame
+		}
+		allow := false
+		// TODO: {lpf} I'm not sure if we need to include guildIDs or
+		// just role to avoid other guild admins to cancel the game in
+		// 'this' guild
+		for _, mr := range m.Member.Roles {
+			r := fmt.Sprintf("%s:%s", m.GuildID, mr)
+			if _, ok := c.adminRoles[r]; ok {
+				allow = true
+				break
+			}
+		}
+		if !allow {
+			return GameError("")
+		}
+		if err := g.Draw(chess.DrawOffer); err != nil {
+			return err
+		}
+		return c.checkOutcome(g, s, m.ChannelID)
 	case "say":
 		msg := strings.Replace(m.Content, c.prefix+"say", "", 1)
 		if msg == "" {
@@ -257,7 +287,7 @@ func (c *ChessHandler) checkOutcome(g *game, s *discordgo.Session, channelID str
 	}
 	err := g.eng.Run(
 		uci.CmdPosition{Position: g.Position()},
-		uci.CmdGo{MoveTime: time.Second / 100},
+		uci.CmdGo{MoveTime: time.Second / 10},
 	)
 	if err != nil {
 		return err
