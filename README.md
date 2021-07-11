@@ -23,6 +23,4 @@ $ go run github.com/DiscordGophers/discordchess/cmd/discordchess
 
 ## Optionals
 
-- `imagemagick` `convert` command to send board image (will send as text if
-  unavailable)
-- `stockfish` https://stockfishchess.org/download/linux/ for bot playing
+- `stockfish` https://stockfishchess.org/download/ for bot playing

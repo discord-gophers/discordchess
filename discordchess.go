@@ -3,16 +3,17 @@ package discordchess
 import (
 	"bytes"
 	"fmt"
+	"image"
 	"image/color"
+	"image/png"
+	"io"
 	"log"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/notnil/chess"
-	chessimage "github.com/notnil/chess/image"
 	"github.com/notnil/chess/uci"
 )
 
@@ -300,46 +301,35 @@ func (c *ChessHandler) checkOutcome(g *game, s *discordgo.Session, channelID str
 	return c.checkOutcome(g, s, channelID)
 }
 
-// sendBoard executes imagemagick convert command to rasterize svg to a raster
-// format.
+// Draw using the drawer :tada:
 func sendBoard(g *game, s *discordgo.Session, channelID string) error {
-	// if only there was something to rasterize svg
-	// or we eventually write an image.Image
-	cmd := exec.Command("convert", "svg:-", "png:-")
-	wr, err := cmd.StdinPipe()
-	if err != nil {
-		return err
-	}
-	rd, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	go func() {
-		defer wr.Close()
-		moves := g.Moves()
-		if len(moves) == 0 {
-			chessimage.SVG(wr, g.Position().Board())
-			return
-		}
+	markColor := color.RGBA{55, 55, 155, 100}
+	marks := []DrawerMark{}
+
+	im := image.NewRGBA(image.Rect(0, 0, 512, 512))
+	moves := g.Moves()
+	if len(moves) != 0 {
 		last := moves[len(moves)-1]
-		yellow := color.RGBA{255, 255, 0, 1}
-		chessimage.SVG(
-			wr,
-			g.Position().Board(),
-			chessimage.MarkSquares(yellow, last.S1(), last.S2()),
-		)
-	}()
+		marks = []DrawerMark{
+			{markColor, int(last.S1().File()), 7 - int(last.S1().Rank())},
+			{markColor, int(last.S2().File()), 7 - int(last.S2().Rank())},
+		}
+	}
+	if err := drawer.Draw(im, g.Position().String(), marks...); err != nil {
+		return err
+	}
 
+	pr, pw := io.Pipe()
+	defer pr.Close()
 	go func() {
-		defer rd.Close()
-		cmd.Run()
+		pw.CloseWithError(png.Encode(pw, im))
 	}()
 
-	_, err = s.ChannelMessageSendComplex(
+	_, err := s.ChannelMessageSendComplex(
 		channelID,
 		&discordgo.MessageSend{
 			Files: []*discordgo.File{
-				{Name: "board.jpg", Reader: rd},
+				{Name: "board.jpg", Reader: pr},
 			},
 		},
 	)
