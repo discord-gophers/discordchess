@@ -1,4 +1,4 @@
-package discordchess
+package chessimage
 
 import (
 	"errors"
@@ -21,16 +21,16 @@ import (
 //go:embed assets/font.ttf
 var fontData []byte
 
-type DrawerPiece int
+type Piece int
 
 const (
-	PieceWhite = DrawerPiece(iota)
+	PieceWhite = Piece(iota)
 	PieceBlack
 )
 
-type DrawerMark struct {
-	color  color.Color
-	sx, sy int
+type Mark struct {
+	Color color.Color
+	Pos   [][2]int
 }
 
 type Drawer struct {
@@ -95,7 +95,37 @@ var piecesMap = map[rune]rune{
 	'p': '♟',
 }
 
-func (d *Drawer) Draw(im draw.Image, fen string, marks ...DrawerMark) error {
+func (d *Drawer) Image(fen string, marks ...Mark) (*image.RGBA, error) {
+	rgba := image.NewRGBA(image.Rect(0, 0, 512, 512))
+	if err := d.Draw(rgba, fen, marks...); err != nil {
+		return nil, err
+	}
+	return rgba, nil
+}
+
+func (d *Drawer) ImagePaletted(fen string, marks ...Mark) (*image.Paletted, error) {
+	rgba := image.NewRGBA(image.Rect(0, 0, 512, 512))
+	if err := d.Draw(rgba, fen, marks...); err != nil {
+		return nil, err
+	}
+
+	palette := color.Palette{
+		d.squareBlack,
+		d.squareWhite,
+		d.pieceBlack,
+		d.pieceWhite,
+		color.Black,
+	}
+	for _, m := range marks {
+		palette = append(palette, m.Color)
+	}
+	im := image.NewPaletted(rgba.Bounds(), palette)
+
+	draw.FloydSteinberg.Draw(im, im.Bounds(), rgba, image.Pt(0, 0))
+	return im, nil
+}
+
+func (d *Drawer) Draw(im draw.Image, fen string, marks ...Mark) error {
 	// Fill with some color
 	draw.Src.Draw(
 		im,
@@ -117,21 +147,22 @@ func (d *Drawer) Draw(im draw.Image, fen string, marks ...DrawerMark) error {
 				image.NewUniform(d.squareColor(sx, sy)),
 				image.Point{},
 			)
-
 		}
 	}
 	// Draw marks
 	for _, m := range marks {
-		x, y := d.pad+m.sx*s, m.sy*s
-		draw.DrawMask(
-			im,
-			image.Rect(x, y, x+s, y+s),
-			image.NewUniform(m.color),
-			image.Pt(0, 0),
-			image.NewUniform(m.color),
-			image.Pt(0, 0),
-			draw.Over,
-		)
+		for _, p := range m.Pos {
+			x, y := d.pad+p[0]*s, p[1]*s
+			draw.DrawMask(
+				im,
+				image.Rect(x, y, x+s, y+s),
+				image.NewUniform(m.Color),
+				image.Pt(0, 0),
+				image.NewUniform(m.Color),
+				image.Pt(0, 0),
+				draw.Over,
+			)
+		}
 	}
 
 	// Parse notation and draw pieces
@@ -205,7 +236,7 @@ func (d Drawer) drawText(im draw.Image, x, y int, c color.Color, s string) {
 	fd.DrawString(s)
 }
 
-func (d Drawer) drawPiece(im draw.Image, sx, sy int, p DrawerPiece, r rune) {
+func (d Drawer) drawPiece(im draw.Image, sx, sy int, p Piece, r rune) {
 	s := (im.Bounds().Dx() - d.pad) / 8
 
 	// bnd, _, _ := d.piecesFace.GlyphBounds(r)
@@ -231,7 +262,7 @@ func (d Drawer) drawPiece(im draw.Image, sx, sy int, p DrawerPiece, r rune) {
 	}
 
 	sr := string(r)
-	// Hackery border
+	// Hackery outline
 	{
 		fd.Src = image.NewUniform(border)
 		fd.Dot = fixed.P(ssx-1, ssy-1)

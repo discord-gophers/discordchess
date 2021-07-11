@@ -6,14 +6,6 @@ import (
 	"github.com/notnil/chess/opening"
 )
 
-// global board drawer
-var drawer = func() *Drawer {
-	d, err := NewDrawer()
-	if err != nil {
-		panic(err)
-	}
-	return d
-}()
 var book *opening.BookECO = opening.NewBookECO()
 
 // this could be directly in the ChessHandler struct
