@@ -30,11 +30,14 @@ func main() {
 	log.Printf("  prefix: %q", prefix)
 	log.Printf("  rooms: %q", roomMatch)
 
-	dc := discordchess.New(
+	dc, err := discordchess.New(
 		prefix,
 		roomMatch,
 		adminRoles,
 	)
+	if err != nil {
+		log.Fatalf("Failed to create discordchess handler: %v", err)
+	}
 
 	dg.AddHandler(dc.MessageCreateHandler)
 

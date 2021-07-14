@@ -3,16 +3,19 @@ package discordchess
 import (
 	"bytes"
 	"fmt"
+	"image"
 	"image/color"
+	"image/gif"
+	"image/png"
+	"io"
 	"log"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/DiscordGophers/discordchess/chessimage"
 	"github.com/bwmarrin/discordgo"
 	"github.com/notnil/chess"
-	chessimage "github.com/notnil/chess/image"
 	"github.com/notnil/chess/uci"
 )
 
@@ -34,10 +37,11 @@ type ChessHandler struct {
 	prefix     string
 	channelRE  *regexp.Regexp
 	adminRoles map[string]struct{}
+	drawer     *chessimage.Drawer
 	states     *state
 }
 
-func New(cmdPrefix, channelRe string, adminRoles []string) *ChessHandler {
+func New(cmdPrefix, channelRe string, adminRoles []string) (*ChessHandler, error) {
 	re := regexp.MustCompile(channelRe)
 
 	roleMap := map[string]struct{}{}
@@ -45,14 +49,21 @@ func New(cmdPrefix, channelRe string, adminRoles []string) *ChessHandler {
 		roleMap[r] = struct{}{}
 	}
 
-	return &ChessHandler{
+	drawer, err := chessimage.NewDrawer()
+	if err != nil {
+		return nil, err
+	}
+
+	c := &ChessHandler{
 		prefix:     cmdPrefix,
 		channelRE:  re,
 		adminRoles: roleMap,
+		drawer:     drawer,
 		states: &state{
 			games: make(map[string]*game),
 		},
 	}
+	return c, nil
 }
 
 func (c *ChessHandler) MessageCreateHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -89,6 +100,12 @@ func (c *ChessHandler) messageCreateHandler(s *discordgo.Session, m *discordgo.M
 	}
 
 	switch cmd[0] {
+	case "cool":
+		g := c.states.game(m.ChannelID)
+		if g == nil {
+			return ErrNoGame
+		}
+		return c.coolThing(g, s, m.ChannelID)
 	case "cancel":
 		g := c.states.game(m.ChannelID)
 		if g == nil {
@@ -236,7 +253,7 @@ func (c *ChessHandler) messageCreateHandler(s *discordgo.Session, m *discordgo.M
 		}
 		_, err := s.ChannelMessageSend(
 			m.ChannelID,
-			fmt.Sprintf("<@%s> send `!draw` to accept", other),
+			fmt.Sprintf("<@%s> send `%sdraw` to accept", c.prefix, other),
 		)
 		return err
 
@@ -262,7 +279,7 @@ func (c *ChessHandler) messageCreateHandler(s *discordgo.Session, m *discordgo.M
 // if the turn() id is same as bot it will use uci to make a move and recheck
 // outcome.
 func (c *ChessHandler) checkOutcome(g *game, s *discordgo.Session, channelID string) error {
-	if err := sendBoard(g, s, channelID); err != nil {
+	if err := c.sendBoard(g, s, channelID); err != nil {
 		log.Println("failed to rasterize the board:", err)
 		// Send the board in text mode if sendBoard fails
 		_, err := s.ChannelMessageSend(
@@ -300,59 +317,7 @@ func (c *ChessHandler) checkOutcome(g *game, s *discordgo.Session, channelID str
 	return c.checkOutcome(g, s, channelID)
 }
 
-// sendBoard executes imagemagick convert command to rasterize svg to a raster
-// format.
-func sendBoard(g *game, s *discordgo.Session, channelID string) error {
-	// if only there was something to rasterize svg
-	// or we eventually write an image.Image
-	cmd := exec.Command("convert", "svg:-", "png:-")
-	wr, err := cmd.StdinPipe()
-	if err != nil {
-		return err
-	}
-	rd, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	go func() {
-		defer wr.Close()
-		moves := g.Moves()
-		if len(moves) == 0 {
-			chessimage.SVG(wr, g.Position().Board())
-			return
-		}
-		last := moves[len(moves)-1]
-		yellow := color.RGBA{255, 255, 0, 1}
-		chessimage.SVG(
-			wr,
-			g.Position().Board(),
-			chessimage.MarkSquares(yellow, last.S1(), last.S2()),
-		)
-	}()
-
-	go func() {
-		defer rd.Close()
-		cmd.Run()
-	}()
-
-	_, err = s.ChannelMessageSendComplex(
-		channelID,
-		&discordgo.MessageSend{
-			Files: []*discordgo.File{
-				{Name: "board.jpg", Reader: rd},
-			},
-		},
-	)
-	if err != nil {
-		return err
-	}
-
-	if o := book.Find(g.Moves()); o != nil {
-		_, err = s.ChannelMessageSend(channelID, o.Title())
-	}
-	return err
-}
-
+// GameOver sends game finish Card.
 func (c *ChessHandler) GameOver(g *game, s *discordgo.Session, channelID string) error {
 	defer c.states.done(channelID)
 
@@ -382,7 +347,11 @@ func (c *ChessHandler) GameOver(g *game, s *discordgo.Session, channelID string)
 		avatarurl = user.AvatarURL("128x128")
 	}
 
-	_, err := s.ChannelMessageSendEmbed(
+	gi, err := c.boardGIF(g)
+	if err != nil {
+		return err
+	}
+	_, err = s.ChannelMessageSendEmbed(
 		channelID,
 		&discordgo.MessageEmbed{
 			Title:       "Game over",
@@ -410,7 +379,117 @@ func (c *ChessHandler) GameOver(g *game, s *discordgo.Session, channelID string)
 			},
 		},
 	)
+	if err != nil {
+		return err
+	}
+
+	gifr, pw := io.Pipe()
+	go func() {
+		pw.CloseWithError(gif.EncodeAll(pw, gi))
+	}()
+
+	_, err = s.ChannelFileSend(channelID, "board.gif", gifr)
 	return err
+}
+
+func (c *ChessHandler) coolThing(g *game, s *discordgo.Session, channelID string) error {
+	gi, err := c.boardGIF(g)
+	if err != nil {
+		return err
+	}
+	pr, pw := io.Pipe()
+	go func() {
+		pw.CloseWithError(gif.EncodeAll(pw, gi))
+	}()
+
+	_, err = s.ChannelFileSend(channelID, "board.gif", pr)
+	return err
+}
+
+// Draw using the drawer :tada:
+func (c *ChessHandler) sendBoard(g *game, s *discordgo.Session, channelID string) error {
+	pr, pw := io.Pipe()
+	defer pr.Close()
+
+	im, err := c.boardImage(g)
+	if err != nil {
+		return err
+	}
+	go func() {
+		pw.CloseWithError(png.Encode(pw, im))
+	}()
+
+	if _, err := s.ChannelFileSend(channelID, "board.png", pr); err != nil {
+		return err
+	}
+
+	if o := book.Find(g.Moves()); o != nil {
+		_, err = s.ChannelMessageSend(channelID, o.Title())
+	}
+	return err
+}
+
+func (c *ChessHandler) boardImage(g *game) (*image.RGBA, error) {
+	markColor := color.RGBA{55, 55, 155, 100}
+	marks := []chessimage.Mark{}
+
+	moves := g.Moves()
+	if len(moves) != 0 {
+		last := moves[len(moves)-1]
+		marks = []chessimage.Mark{
+			{
+				Color: markColor,
+				Pos: [][2]int{
+					{int(last.S1().File()), 7 - int(last.S1().Rank())},
+					{int(last.S2().File()), 7 - int(last.S2().Rank())},
+				},
+			},
+		}
+	}
+	return c.drawer.Image(g.Position().String(), marks...)
+}
+
+func (c *ChessHandler) boardGIF(g *game) (*gif.GIF, error) {
+	gi := gif.GIF{
+		Config: image.Config{
+			Width:  512,
+			Height: 512,
+		},
+	}
+
+	markColor := color.RGBA{100, 100, 200, 255}
+	moves := g.Moves()
+	gg := chess.NewGame()
+	frame, err := c.drawer.ImagePaletted(gg.Position().String())
+	if err != nil {
+		return nil, err
+	}
+	gi.Image = append(gi.Image, frame)
+	gi.Delay = append(gi.Delay, 150)
+
+	for i, m := range moves {
+		gg.Move(m)
+		frame, err := c.drawer.ImagePaletted(
+			gg.Position().String(),
+			chessimage.Mark{
+				Color: markColor,
+				Pos: [][2]int{
+					{int(m.S1().File()), 7 - int(m.S1().Rank())},
+					{int(m.S2().File()), 7 - int(m.S2().Rank())},
+				},
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+		gi.Image = append(gi.Image, frame)
+		delay := 150
+		if i == len(moves)-1 {
+			delay = 500
+		}
+		gi.Delay = append(gi.Delay, delay)
+	}
+	return &gi, nil
 }
 
 func validMovesStr(g *game) string {
