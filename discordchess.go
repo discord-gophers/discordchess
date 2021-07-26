@@ -31,7 +31,8 @@ var help = "" +
 	"  `%[1]splay @player1 @player2` - starts a game\n" +
 	"  `%[1]smove <move>` - do a move in algebraic notation\n" +
 	"  `%[1]sboard` - shows the board\n" +
-	"  `%[1]sresign` - resigns the game\n"
+	"  `%[1]sresign` - resigns the game\n" +
+	"  `%[1]sdraw` - offer draw\n"
 
 type ChessHandler struct {
 	prefix     string
@@ -253,7 +254,7 @@ func (c *ChessHandler) messageCreateHandler(s *discordgo.Session, m *discordgo.M
 		}
 		_, err := s.ChannelMessageSend(
 			m.ChannelID,
-			fmt.Sprintf("<@%s> send `%sdraw` to accept", c.prefix, other),
+			fmt.Sprintf("<@%s> send `%sdraw` to accept", other, c.prefix),
 		)
 		return err
 
